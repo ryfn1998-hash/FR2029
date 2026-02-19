@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 雲端人臉比對系統</title>
+    <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #f5f5f5; padding: 20px; }
+        .box { background: white; border-radius: 15px; padding: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); display: inline-block; }
+        .canvas-wrap { position: relative; display: inline-block; margin-top: 20px; border: 2px solid #ddd; }
+        canvas { position: absolute; top: 0; left: 0; }
+        img { max-width: 600px; height: auto; display: block; }
+        .btn-group { margin: 20px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+        #loader { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="box">
+    <h2>人臉辨識比對 (免安裝版)</h2>
+    <p id="loader">正在從雲端載入 AI 模型，請稍候...</p>
+
+    <div class="btn-group">
+        <label>1. 上傳目標人物 (基準)：<input type="file" id="refImg" accept="image/*"></label>
+        <label>2. 上傳待掃描照片：<input type="file" id="queryImg" accept="image/*"></label>
+    </div>
+
+    <div class="canvas-wrap" id="stage">
+        <img id="mainView" src="https://via.placeholder.com/400x300?text=Wait+for+Upload">
+    </div>
+</div>
+
+<script>
+    // 使用他人託管在 GitHub 的模型路徑 (這樣你就不用自己下載模型了)
+    const MODEL_URL = 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights/';
+
+    async function init() {
+        // 從雲端載入模型
+        await faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL);
+        await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+        await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+        
+        document.getElementById('loader').innerText = "✅ AI 已就緒，請上傳照片";
+        document.getElementById('loader').style.color = "green";
+    }
+
+    async function runCompare() {
+        const refFile = document.getElementById('refImg').files[0];
+        const queryFile = document.getElementById('queryImg').files[0];
+
+        if (!refFile || !queryFile) return;
+
+        // 1. 處理基準圖
+        const refImage = await faceapi.bufferToImage(refFile);
+        const refResult = await faceapi.detectSingleFace(refImage).withFaceLandmarks().withFaceDescriptor();
+        
+        if (!refResult) return alert("基準圖找不到人臉！");
+        const faceMatcher = new faceapi.FaceMatcher(refResult, 0.6);
+
+        // 2. 顯示並掃描目標圖
+        const mainImg = document.getElementById('mainView');
+        mainImg.src = URL.createObjectURL(queryFile);
+
+        mainImg.onload = async () => {
+            // 清除舊的畫布
+            const oldCanvas = document.querySelector('canvas');
+            if (oldCanvas) oldCanvas.remove();
+
+            const detections = await faceapi.detectAllFaces(mainImg).withFaceLandmarks().withFaceDescriptors();
+            
+            const canvas = faceapi.createCanvasFromMedia(mainImg);
+            document.getElementById('stage').appendChild(canvas);
+            
+            const displaySize = { width: mainImg.width, height: mainImg.height };
+            faceapi.matchDimensions(canvas, displaySize);
+            const resizedResults = faceapi.resizeResults(detections, displaySize);
+
+            resizedResults.forEach(d => {
+                const match = faceMatcher.findBestMatch(d.descriptor);
+                const score = (1 - match.distance).toFixed(2);
+                const isTarget = match.label !== 'unknown';
+
+                const box = d.detection.box;
+                const drawBox = new faceapi.draw.DrawBox(box, { 
+                    label: isTarget ? `目標人物 (${Math.round(score*100)}%)` : `無名氏`,
+                    drawStyle: { color: isTarget ? 'lime' : 'red', lineWidth: 2 }
+                });
+                drawBox.draw(canvas);
+            });
+        };
+    }
+
+    document.getElementById('refImg').onchange = runCompare;
+    document.getElementById('queryImg').onchange = runCompare;
+
+    init();
+</script>
+
+</body>
+</html>
